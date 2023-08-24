@@ -1,22 +1,26 @@
+#include "WiFiManager.h"
 
-// NAPT example released to public domain
+
+// variables
+bool RepeaterIsWorking= true;
+int ledState = LOW; 
+unsigned long previousMillis = 0;
+long delay_time=0; // interval between blinks
+
+// blink every 200ms if connected to router
+// blink every 1sec if web server is active
+// led is off is there is an error with the repeater
+//led is on when trying to connect to router.
+
+
+/* Set these to your desired credentials. */
 
 #if LWIP_FEATURES && !LWIP_IPV6
 
 #define HAVE_NETDUMP 0
-
-String ssid = "";
-String pass = "";
-
-unsigned long timestart = 0;
-unsigned long timeout=0;
-
-int n = 0;
-int trial = 0;
-
-#include <ESP8266WiFi.h>
 #include <lwip/napt.h>
 #include <lwip/dns.h>
+#include <LwipDhcpServer.h>
 
 #define NAPT 1000
 #define NAPT_PORT 10
@@ -24,6 +28,7 @@ int trial = 0;
 #if HAVE_NETDUMP
 
 #include <NetDump.h>
+
 
 void dump(int netif_idx, const char* data, size_t len, int out, int success) {
   (void)success;
@@ -33,16 +38,33 @@ void dump(int netif_idx, const char* data, size_t len, int out, int success) {
   // optional filter example: if (netDump_is_ARP(data))
   {
     netDump(Serial, data, len);
-    // netDumpHex(Serial, data, len);
+    //netDumpHex(Serial, data, len);
   }
 }
 #endif
 
-void wifiScan();
-void wifiInit();
+
+
+
+
+
+WiFiManager routerAP;
+
 
 void setup() {
+  delay(1000);
+ pinMode(0,INPUT_PULLUP);
+ pinMode(LED_BUILTIN,OUTPUT);
+ digitalWrite(LED_BUILTIN,1); //active low
   Serial.begin(115200);
+
+  Serial.println();
+
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed");
+    return;
+  }
+
   Serial.printf("\n\nNAPT Range extender\n");
   Serial.printf("Heap on start: %d\n", ESP.getFreeHeap());
 
@@ -50,36 +72,76 @@ void setup() {
   phy_capture = dump;
 #endif
 
-  
-
   // first, connect to STA so we can get a proper local DNS server
-  wifiScan();
-  wifiInit();
-  Serial.printf("\nSTA: %s (dns: %s / %s)\n", WiFi.localIP().toString().c_str(), WiFi.dnsIP(0).toString().c_str(), WiFi.dnsIP(1).toString().c_str());
 
-  // By default, DNS option will point to the interface IP
-  // Instead, point it to the real DNS server.
-  // Notice that:
-  // - DhcpServer class only supports IPv4
-  // - Only a single IP can be set
-  auto& server = WiFi.softAPDhcpServer();
-  server.setDns(WiFi.dnsIP(0));
+  String ssid = routerAP.get_credentials(0); // if the file does not exist the function will always return null
+  String pass = routerAP.get_credentials(1);
+  String ap= routerAP.get_credentials(2);
 
-  WiFi.softAPConfig(  // enable AP, with android-compatible google domain
-    IPAddress(172, 217, 28, 254), IPAddress(172, 217, 28, 254), IPAddress(255, 255, 255, 0));
-  WiFi.softAP(ssid + " repeater", pass);
-  Serial.printf("AP: %s\n", WiFi.softAPIP().toString().c_str());
-
-  Serial.printf("Heap before: %d\n", ESP.getFreeHeap());
-  err_t ret = ip_napt_init(NAPT, NAPT_PORT);
-  Serial.printf("ip_napt_init(%d,%d): ret=%d (OK=%d)\n", NAPT, NAPT_PORT, (int)ret, (int)ERR_OK);
-  if (ret == ERR_OK) {
-    ret = ip_napt_enable_no(SOFTAP_IF, 1);
-    Serial.printf("ip_napt_enable_no(SOFTAP_IF): ret=%d (OK=%d)\n", (int)ret, (int)ERR_OK);
-    if (ret == ERR_OK) { Serial.printf("WiFi Network '%s' with same password is now NATed behind '%s'\n", ssid + " repeater", pass); }
+  if (ssid == "null") { // if the file does not exist ssid will be null
+start_webserver:
+    IPAddress myIP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(myIP);
+    WiFi.softAP("Fat7y Repeater Access Point");
+    Serial.printf("AP: %s\n", WiFi.softAPIP().toString().c_str());
+    routerAP.create_server();
+    //server.begin();
+    routerAP.begin_server();
+    Serial.println("HTTP server started");
+    delay_time=1000; // blink every sec if webserver is active
   }
-  Serial.printf("Heap after napt init: %d\n", ESP.getFreeHeap());
-  if (ret != ERR_OK) { Serial.printf("NAPT initialization failed\n"); }
+  else {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, pass); // check function to understand
+    int timeout_counter=0;
+    while (WiFi.status() != WL_CONNECTED) {
+      if(timeout_counter>=120){
+        goto start_webserver; // if it fails to connect start_webserver
+      }
+
+      Serial.print('.');
+      timeout_counter++;
+      digitalWrite(LED_BUILTIN,0);// leave led on when trying to connect
+      delay(500);
+    }
+
+
+
+    Serial.printf("\nSTA: %s (dns: %s / %s)\n",
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.dnsIP(0).toString().c_str(),
+                  WiFi.dnsIP(1).toString().c_str());
+
+    // give DNS servers to AP side
+    auto& server1 = WiFi.softAPDhcpServer();
+    server1.setDns(WiFi.dnsIP(0));
+    server1.setDns(WiFi.dnsIP(1));
+
+    WiFi.softAPConfig(  // enable AP, with android-compatible google domain
+      IPAddress(172, 217, 28, 254),
+      IPAddress(172, 217, 28, 254),
+      IPAddress(255, 255, 255, 0));
+    WiFi.softAP(ap, pass);
+    Serial.printf("AP: %s\n", WiFi.softAPIP().toString().c_str());
+
+    Serial.printf("Heap before: %d\n", ESP.getFreeHeap());
+    err_t ret = ip_napt_init(NAPT, NAPT_PORT);
+    Serial.printf("ip_napt_init(%d,%d): ret=%d (OK=%d)\n", NAPT, NAPT_PORT, (int)ret, (int)ERR_OK);
+    if (ret == ERR_OK) {
+      ret = ip_napt_enable_no(SOFTAP_IF, 1);
+      Serial.printf("ip_napt_enable_no(SOFTAP_IF): ret=%d (OK=%d)\n", (int)ret, (int)ERR_OK);
+      if (ret == ERR_OK) {
+        Serial.printf("Successfully NATed to WiFi Network '%s' with the same password", ssid.c_str());
+      }
+    }
+    Serial.printf("Heap after napt init: %d\n", ESP.getFreeHeap());
+    if (ret != ERR_OK) {
+      Serial.printf("NAPT initialization failed\n");
+    }
+    delay_time=200; // blink every half second if connection was succesfull
+  }
+  RepeaterIsWorking=true;
 }
 
 #else
@@ -87,91 +149,35 @@ void setup() {
 void setup() {
   Serial.begin(115200);
   Serial.printf("\n\nNAPT not supported in this configuration\n");
+  RepeaterIsWorking= false;
+  digitalWrite(LED_BUILTIN,1); // led stays off
 }
 
 #endif
 
-void loop() {}
-
-
-void wifiScan()
-{
-    n = WiFi.scanNetworks();
-  int x = WiFi.scanComplete();
-  Serial.println(x);
-
-  Serial.println("Scan started");
-  delay(500);
-
-  if(n == 0)
-  {
-    Serial.println("Not networks found");
+void loop() {
+  if(digitalRead(0)==LOW){
+    LittleFS.format();
+    ESP.restart();
   }
-  else
-  {
-    Serial.print(n);
-    Serial.println(" networks found");
 
-    for(int i = 0; i < n; i++)
-    {
-      Serial.print(i + 1);
-      Serial.print(": ");
-      Serial.print(WiFi.SSID(i));
-      Serial.print(" (");
-      Serial.print(WiFi.RSSI(i));
-      Serial.print(")");
-      if((WiFi.encryptionType(i) == ENC_TYPE_NONE))
-      {
-        Serial.println("*");
-      }
-      delay(10);
-      Serial.println("");
+  while(RepeaterIsWorking){
+ unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= delay_time) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+
+    // if the LED is off turn it on and vice-versa:
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
     }
-  }
 
-  Serial.println("Enter the no. of the network you want to connect");
-  while (Serial.available() == 0){}
-  int no_ssid = Serial.parseInt();
-  ssid = WiFi.SSID(no_ssid - 1);  
-
-  if((WiFi.encryptionType(no_ssid - 1) != ENC_TYPE_NONE))
-  {
-    Serial.println("Please enter the password of the network you chose");
-    while (Serial.available() == 0){}
-    pass = Serial.readStringUntil('\n');
+    // set the LED with the ledState of the variable:
+    digitalWrite(LED_BUILTIN, ledState);
   }
-  else
-  {
-    pass = "";
-  }
+  break;
 }
-
-void wifiInit()
-{
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, pass);
-  Serial.print("Connecting to Wifi...");
-  timeout = millis();
-  while((WiFi.status() != WL_CONNECTED) && (millis() - timeout < 8000))
-  {
-    Serial.print(".");
-    delay(1000);
-  }
-  if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_NO_SSID_AVAIL)
-  {
-    Serial.println("Password is not correct");
-  }
-  else if(WiFi.status() != WL_CONNECTED && WiFi.status() == WL_NO_SSID_AVAIL)
-  {
-    Serial.println("Wifi network is not avaliable");
-  }
-  else
-  {
-    Serial.println("");
-    Serial.println("Connected successfully");
-    Serial.print("IP Address : ");
-    Serial.println(WiFi.localIP());
-    trial = 0;
-  }
-
 }
