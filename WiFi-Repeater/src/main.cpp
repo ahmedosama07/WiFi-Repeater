@@ -7,6 +7,8 @@ int ledState = LOW;
 unsigned long previousMillis = 0;
 long delay_time=0; // interval between blinks
 
+#define FORMAT 0
+
 // blink every 200ms if connected to router
 // blink every 1sec if web server is active
 // led is off is there is an error with the repeater
@@ -53,7 +55,7 @@ WiFiManager routerAP;
 
 void setup() {
   delay(1000);
- pinMode(0,INPUT_PULLUP);
+ pinMode(FORMAT,INPUT_PULLUP);
  pinMode(LED_BUILTIN,OUTPUT);
  digitalWrite(LED_BUILTIN,1); //active low
   Serial.begin(115200);
@@ -156,7 +158,8 @@ void setup() {
 #endif
 
 void loop() {
-  if(digitalRead(0)==LOW){
+  if(digitalRead(FORMAT)==LOW){
+    Serial.println("Resetting configuration");
     LittleFS.format();
     ESP.restart();
   }

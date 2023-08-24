@@ -52,7 +52,7 @@ JsonObject obj = Config.as<JsonObject>();
         html+= "</head>";
         html += "<body>";
         html+= "<div>";
-        html += "<h1>Fat7y Config page</h1>";
+        html += "<h1>Fat7y Configuration page</h1>";
         html += "<button onclick=\"window.location.href='/';\">Scan </button>";
         html += "<p>networks found </p>";
         html += "<form action=\"/credentials\">";
